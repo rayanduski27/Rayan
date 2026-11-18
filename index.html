@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rayan TV</title>
+<link rel="manifest" href="manifest.json">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mpegts.js/1.7.3/mpegts.min.js"></script>
+<style>
+  :root {
+    --bg: #07070a; --surface: #15151b; --text: #f4f1f2; --muted: #8d858b;
+    --blue: #2563eb; --gold: #d4af37; --ring: rgba(212,175,55,.35);
+  }
+  body.light { --bg: #f5f3f4; --surface: #ffffff; --text: #17131a; --muted: #6f676e; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body { background: var(--bg); color: var(--text); font-family: "Segoe UI", Tahoma, sans-serif; overflow-x: hidden; }
+  .topbar {
+    position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+    padding: 18px 4vw; background: linear-gradient(var(--bg) 70%, transparent);
+  }
+  .brand {
+    font-size: 2rem; font-weight: 900; letter-spacing: 1px;
+    background: linear-gradient(120deg, var(--blue) 0%, var(--gold) 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent; margin-inline-end: auto;
+  }
+  .tools { display: flex; align-items: center; gap: 12px; direction: ltr; flex-wrap: wrap; }
+  .search {
+    width: 300px; padding: 12px 18px; border-radius: 999px; border: 2px solid transparent;
+    background: var(--surface); color: var(--text); font-size: 1rem; outline: none;
+  }
+  .btn {
+    padding: 12px 18px; border-radius: 999px; border: 2px solid transparent;
+    background: var(--surface); color: var(--text); font: inherit; cursor: pointer;
+  }
+  .focus { border-color: var(--gold) !important; box-shadow: 0 0 0 4px var(--ring); }
+  .section { padding: 8px 4vw 28px; }
+  .section h2 { font-size: 1.35rem; margin: 0 0 12px; color: var(--gold); }
+  .row { display: flex; gap: 18px; overflow-x: auto; direction: ltr; padding: 12px 6px 22px; scrollbar-width: none; }
+  .row::-webkit-scrollbar { display: none; }
+  .poster {
+    flex: 0 0 240px; height: 140px; border-radius: 16px; padding: 14px;
+    display: flex; flex-direction: column; justify-content: flex-end; position: relative;
+    color: #fff; cursor: pointer; outline: none; background-size: cover; background-position: center;
+    transition: transform .2s, box-shadow .2s; box-shadow: 0 10px 24px rgba(0,0,0,.35);
+  }
+  .poster.focus { transform: scale(1.06); }
+  .poster .nm { font-weight: 700; font-size: 1.05rem; text-shadow: 0 2px 8px rgba(0,0,0,.6); }
+  .poster .sb { font-size: .8rem; opacity: .85; margin-top: 2px; }
+  .empty { color: var(--muted); padding: 10px 6px; }
+  #player { position: fixed; inset: 0; background: #000; display: none; z-index: 20; }
+  #player.on { display: block; }
+  #video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+  #osd {
+    position: absolute; top: 24px; inset-inline-start: 24px; display: none;
+    background: rgba(0,0,0,.7); color: #fff; padding: 10px 20px; border-radius: 12px; font-size: 1.4rem;
+  }
+  #osd.show { display: block; }
+
+  /* ===== وەشانا موبایل ===== */
+  body.mobile .topbar { padding: 12px 4vw; gap: 12px; }
+  body.mobile .brand { font-size: 1.5rem; }
+  body.mobile .tools { width: 100%; }
+  body.mobile .search { width: 100%; order: 1; font-size: .95rem; padding: 10px 14px; }
+  body.mobile .btn { padding: 9px 14px; font-size: .9rem; }
+  body.mobile .section { padding: 6px 4vw 18px; }
+  body.mobile .section h2 { font-size: 1.1rem; }
+  body.mobile .poster { flex: 0 0 70vw; height: 110px; border-radius: 14px; padding: 10px; }
+  body.mobile .poster.focus { transform: none; }
+  body.mobile .poster .nm { font-size: .95rem; }
+  body.mobile .row { gap: 12px; padding: 8px 4px 16px; }
+  body.mobile #osd { font-size: 1.1rem; top: 14px; inset-inline-start: 14px; }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">Rayan</div>
+    <div class="tools" data-group>
+      <input id="q" class="search" type="text" autocomplete="off" data-nav>
+      <button id="bLang" class="btn" data-nav></button>
+      <button id="bTheme" class="btn" data-nav></button>
+      <button id="bMode" class="btn" data-nav></button>
+    </div>
+  </div>
+  <main id="rows"></main>
+  <div id="player">
+    <video id="video" autoplay playsinline></video>
+    <div id="osd"></div>
+  </div>
+
+<script>
+  // ============ لینکێ CSV یێ Google Sheet ============
+  const SHEET_URL = "https://docs.google.com/spreadsheets/d/1v4iVED3A3FBmY-rBzWTLeACeWzcodZ9Ifw8Q-d2tEBY/export?format=csv";
+
+  const I18N = {
+    ar: {
+      search: "بحث...", results: "نتائج البحث", noRes: "لا توجد نتائج",
+      notFound: "غير موجود", loading: "جارٍ التحميل...", back: "رجوع", episode: "حلقة",
+      toLang: "English", toTheme: "☀️ فاتح", fromTheme: "🌙 داكن",
+      toMobile: "📱 موبايل", toTv: "📺 تلفاز"
+    },
+    en: {
+      search: "Search...", results: "Search results", noRes: "No results",
+      notFound: "Not found", loading: "Loading...", back: "Back", episode: "Episode",
+      toLang: "عربي", toTheme: "☀️ Light", fromTheme: "🌙 Dark",
+      toMobile: "📱 Mobile", toTv: "📺 TV"
+    }
+  };
+
+  // ڕەنگی جۆرێن ئامادە. جۆرێکی نوو ب ڕەنگێ سەرەکی دێت
+  const KNOWN = {
+    live:        { c1: "#2563eb", c2: "#1e3a8a" },
+    cartoon:     { c1: "#f59e0b", c2: "#b45309" },
+    animation:   { c1: "#d4af37", c2: "#7c5e10" },
+    documentary: { c1: "#0891b2", c2: "#164e63" },
+    islamic:     { c1: "#16a34a", c2: "#14532d" }
+  };
+  const FALLBACK = { c1: "#6366f1", c2: "#312e81" };
+
+  // ============ ڕێکخستن ============
+  // mode: "tv" یان "mobile". ب خۆکار: ئەگەر شاشە بچووک بیت موبایل، نەخێر تیڤی
+  const state = { lang: "ar", theme: "dark", mode: window.innerWidth < 768 ? "mobile" : "tv" };
+  try {
+    const s = JSON.parse(localStorage.getItem("rayanPrefs") || "{}");
+    if (s.lang) state.lang = s.lang;
+    if (s.theme) state.theme = s.theme;
+    if (s.mode) state.mode = s.mode;
+  } catch (e) {}
+  const savePrefs = () => { try { localStorage.setItem("rayanPrefs", JSON.stringify(state)); } catch (e) {} };
+
+  const $ = id => document.getElementById(id);
+  const q = $("q"), player = $("player"), video = $("video"), osd = $("osd");
+  const label = k => I18N[state.lang][k] || k;
+
+  let categories = [];        // [{ id, title, c1, c2, series: [{ name, image, episodes: [{url}] }] }]
+  let query = "", cur = null, osdTimer = null, numTimer = null, numBuf = "";
+  let engine = null;          // hls یان mpegts
+  let currentList = [], playingIdx = 0, autoNext = false;
+  let inSeries = null;        // { c, s } کاتێ لیستا ئەلقەیان ڤەکرییە
+
+  // ============ خواندنا CSV ============
+  function parseCSV(text) {
+    const rows = [];
+    let row = [], cell = "", inQ = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i], next = text[i + 1];
+      if (inQ) {
+        if (ch === '"' && next === '"') { cell += '"'; i++; }
+        else if (ch === '"') inQ = false;
+        else cell += ch;
+      } else if (ch === '"') inQ = true;
+      else if (ch === ",") { row.push(cell.trim()); cell = ""; }
+      else if (ch === "\n" || ch === "\r") {
+        if (ch === "\r" && next === "\n") i++;
+        row.push(cell.trim()); rows.push(row); row = []; cell = "";
+      } else cell += ch;
+    }
+    if (cell || row.length) { row.push(cell.trim()); rows.push(row); }
+    return rows.filter(r => r.some(x => x));
+  }
+
+  // ڕیزێن هەمان ناڤ = ئەلقەکانی یەک زنجیرە (ب ڕێزا Sheet)
+  function buildCategories(rows) {
+    if (!rows.length) return [];
+    const header = rows[0].map(h => h.toLowerCase().trim());
+    const ci = header.indexOf("category"), ni = header.indexOf("name");
+    const ii = header.indexOf("image");
+    // هەر ستوونێکی دی = لینکێن ئەلقان (ئێک ڕیز = زنجیرەیەکا تەمام)
+    const urlCols = header.map((_, k) => k).filter(k => k !== ci && k !== ni && k !== ii);
+    const map = new Map();
+    rows.slice(1).forEach(r => {
+      const rawId = (r[ci] || "").trim();
+      const id = rawId.toLowerCase();
+      const urls = urlCols
+        .flatMap(k => (r[k] || "").split(","))
+        .map(u => u.trim())
+        .filter(u => /^https?:\/\//i.test(u));
+      const name = (r[ni] || "").trim() || urls[0];
+      const image = ii >= 0 ? (r[ii] || "").trim() : "";
+      if (!id || !urls.length) return;
+
+      if (!map.has(id)) map.set(id, { id, title: rawId, ...(KNOWN[id] || FALLBACK), series: [], _byName: new Map() });
+      const c = map.get(id);
+      const key = name.toLowerCase();
+      if (!c._byName.has(key)) {
+        const s = { name, image, episodes: [] };
+        c._byName.set(key, s);
+        c.series.push(s);
+      }
+      const s = c._byName.get(key);
+      if (!s.image && image) s.image = image;
+      urls.forEach(url => s.episodes.push({ url }));
+    });
+    const order = Object.keys(KNOWN);
+    return [...map.values()]
+      .map(({ _byName, ...c }) => c)
+      .sort((a, b) => {
+        const ia = order.indexOf(a.id), ib = order.indexOf(b.id);
+        return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+      });
+  }
+
+  async function loadContent() {
+    try {
+      const sep = SHEET_URL.includes("?") ? "&" : "?";
+      const res = await fetch(SHEET_URL + sep + "t=" + Date.now(), { cache: "no-store" });
+      categories = buildCategories(parseCSV(await res.text()));
+    } catch (e) {
+      categories = [];
+    }
+    buildRows();
+  }
+
+  // ============ ڕووکار ============
+  function applyPrefs() {
+    document.documentElement.lang = state.lang;
+    document.documentElement.dir = state.lang === "ar" ? "rtl" : "ltr";
+    document.body.classList.toggle("light", state.theme === "light");
+    document.body.classList.toggle("mobile", state.mode === "mobile");
+    q.placeholder = label("search");
+    $("bLang").textContent = label("toLang");
+    $("bTheme").textContent = state.theme === "dark" ? label("toTheme") : label("fromTheme");
+    $("bMode").textContent = state.mode === "mobile" ? label("toTv") : label("toMobile");
+  }
+
+  function poster(s, c, name, sub, onClick) {
+    const d = document.createElement("div");
+    d.className = "poster";
+    d.tabIndex = 0;
+    d.dataset.nav = "";
+    d.style.background = s && s.image
+      ? `linear-gradient(to top, rgba(0,0,0,.7), transparent 60%), url("${s.image}") center/cover`
+      : `linear-gradient(135deg, ${c.c1}, ${c.c2})`;
+    d.innerHTML = `<div class="nm"></div><div class="sb"></div>`;
+    d.querySelector(".nm").textContent = name;
+    d.querySelector(".sb").textContent = sub;
+    d.onclick = onClick;
+    return d;
+  }
+
+  function section(title, entries) {
+    const sec = document.createElement("section");
+    sec.className = "section";
+    const h = document.createElement("h2");
+    h.textContent = title;
+    sec.appendChild(h);
+    if (!entries.length) {
+      const e = document.createElement("div");
+      e.className = "empty";
+      e.textContent = label("noRes");
+      sec.appendChild(e);
+      return sec;
+    }
+    const row = document.createElement("div");
+    row.className = "row";
+    row.dataset.group = "";
+    entries.forEach(({ c, s }) => {
+      const sub = s.episodes.length > 1 ? `${s.episodes.length} ${label("episode")}` : c.title;
+      row.appendChild(poster(s, c, s.name, sub, () => onSeries(c, s)));
+    });
+    sec.appendChild(row);
+    return sec;
+  }
+
+  function renderSeries(root) {
+    const { c, s } = inSeries;
+    const sec = document.createElement("section");
+    sec.className = "section";
+
+    const bar = document.createElement("div");
+    bar.className = "tools";
+    bar.dataset.group = "";
+    const back = document.createElement("button");
+    back.className = "btn";
+    back.dataset.nav = "";
+    back.textContent = label("back");
+    back.onclick = leaveSeries;
+    bar.appendChild(back);
+    sec.appendChild(bar);
+
+    const h = document.createElement("h2");
+    h.textContent = s.name;
+    sec.appendChild(h);
+
+    const row = document.createElement("div");
+    row.className = "row";
+    row.dataset.group = "";
+    s.episodes.forEach((ep, i) => {
+      row.appendChild(poster(s, c, `${label("episode")} ${i + 1}`, s.name, () => playFrom(c, s, i)));
+    });
+    sec.appendChild(row);
+    root.appendChild(sec);
+    focusEl(row.firstChild || back);
+  }
+
+  function buildRows() {
+    applyPrefs();
+    const root = $("rows");
+    root.innerHTML = "";
+    if (inSeries) return renderSeries(root);
+    if (query) {
+      const needle = query.toLowerCase(), list = [];
+      categories.forEach(c => c.series.forEach(s => {
+        if (s.name.toLowerCase().includes(needle)) list.push({ c, s });
+      }));
+      root.appendChild(section(label("results"), list));
+    } else {
+      categories.forEach(c => root.appendChild(section(c.title, c.series.map(s => ({ c, s })))));
+    }
+    focusFirst();
+  }
+
+  function onSeries(c, s) {
+    if (s.episodes.length > 1) {
+      inSeries = { c, s };
+      buildRows();
+    } else {
+      playFrom(c, s, 0);
+    }
+  }
+
+  function leaveSeries() {
+    inSeries = null;
+    buildRows();
+  }
+
+  // ============ جوڵەی ڕێنیشاندەر ============
+  function groups() {
+    return [...document.querySelectorAll("[data-group]")]
+      .map(g => [...g.querySelectorAll("[data-nav]")])
+      .filter(a => a.length);
+  }
+  function locate(el) {
+    const g = groups();
+    for (let r = 0; r < g.length; r++) {
+      const c = g[r].indexOf(el);
+      if (c >= 0) return { g, r, c };
+    }
+    return null;
+  }
+  function focusEl(el) {
+    if (!el) return;
+    document.querySelectorAll(".focus").forEach(x => x.classList.remove("focus"));
+    cur = el;
+    el.classList.add("focus");
+    el.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+  function focusFirst() {
+    const g = groups();
+    if (!g.length) return;
+    focusEl(g[1] && g[1][0] ? g[1][0] : g[0][0]);
+  }
+  function move(dr, dc) {
+    const L = locate(cur);
+    if (!L) return focusEl(groups()[0][0]);
+    if (dc) {
+      const row = L.g[L.r], n = L.c + dc;
+      if (n >= 0 && n < row.length) focusEl(row[n]);
+    } else if (dr) {
+      const nr = L.r + dr;
+      if (nr < 0 || nr >= L.g.length) return;
+      const row = L.g[nr];
+      focusEl(row[Math.min(L.c, row.length - 1)]);
+    }
+  }
+
+  // ============ پەخشان ============
+  function showOsd(text) {
+    osd.textContent = text;
+    osd.classList.add("show");
+    clearTimeout(osdTimer);
+    osdTimer = setTimeout(() => osd.classList.remove("show"), 3000);
+  }
+
+  function destroyEngine() {
+    if (engine) { try { engine.destroy(); } catch (e) {} engine = null; }
+  }
+
+  // hls بۆ m3u8، mpegts بۆ ts، ئەوێن دی ڕاستەوخۆ
+  function startEngine(url) {
+    destroyEngine();
+    if (/\.m3u8(\?|$)/i.test(url) && window.Hls && Hls.isSupported()) {
+      const h = new Hls();
+      h.loadSource(url);
+      h.attachMedia(video);
+      engine = { destroy: () => h.destroy() };
+    } else if (/\.ts(\?|$)/i.test(url) && window.mpegts && mpegts.isSupported()) {
+      const p = mpegts.createPlayer({ type: "mpegts", isLive: true, url });
+      p.attachMediaElement(video);
+      p.load();
+      engine = { destroy: () => { p.unload(); p.detachMediaElement(); p.destroy(); } };
+    } else {
+      video.src = url;
+    }
+  }
+
+  // کاتێ بکەڤیتە ئەلقەیەکێ/کەناڵەکێ
+  function playFrom(c, s, i) {
+    const isSeries = s.episodes.length > 1;
+    if (isSeries) {
+      currentList = s.episodes.map((ep, k) => ({
+        name: `${s.name} - ${label("episode")} ${k + 1}`, url: ep.url
+      }));
+      autoNext = true;
+      playIdx(i);
+    } else {
+      // کەناڵێن یەک-ڕیزی ل ناڤ جۆرێ، بۆ گواستنا ب ژمارە و ↑↓
+      const singles = c.series.filter(x => x.episodes.length === 1);
+      currentList = singles.map(x => ({ name: x.name, url: x.episodes[0].url }));
+      autoNext = false;
+      playIdx(singles.indexOf(s));
+    }
+  }
+
+  function playIdx(i) {
+    const n = currentList.length;
+    if (!n) return;
+    playingIdx = (i + n) % n;
+    const it = currentList[playingIdx];
+    startEngine(it.url);
+    player.classList.add("on");
+    video.play().catch(() => {});
+    const req = player.requestFullscreen || player.webkitRequestFullscreen;
+    if (req) req.call(player).catch(() => {});
+    showOsd(`${playingIdx + 1} - ${it.name}`);
+  }
+
+  // ئەگەر ئەلقە تەواو بوو، ئەوا دووتر ب خۆکار دهێت
+  video.addEventListener("ended", () => {
+    if (autoNext && playingIdx + 1 < currentList.length) playIdx(playingIdx + 1);
+  });
+
+  function closePlayer() {
+    player.classList.remove("on");
+    video.pause();
+    destroyEngine();
+    video.removeAttribute("src");
+    video.load();
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  }
+
+  // ============ گەڕان ============
+  q.addEventListener("input", () => {
+    query = q.value.trim();
+    inSeries = null;
+    buildRows();
+    focusEl(q);
+  });
+
+  // ============ زمان و مۆد ============
+  $("bLang").onclick = () => {
+    state.lang = state.lang === "ar" ? "en" : "ar";
+    savePrefs(); buildRows();
+  };
+  $("bTheme").onclick = () => {
+    state.theme = state.theme === "dark" ? "light" : "dark";
+    savePrefs(); applyPrefs();
+  };
+
+  $("bMode").onclick = () => {
+    state.mode = state.mode === "mobile" ? "tv" : "mobile";
+    savePrefs(); applyPrefs(); buildRows();
+  };
+
+  // ============ کلیلەکان ============
+  document.addEventListener("keydown", e => {
+    const back = ["Escape", "Backspace", "GoBack", "BrowserBack"].includes(e.key);
+
+    if (player.classList.contains("on")) {
+      e.preventDefault();
+      if (/^[0-9]$/.test(e.key)) {
+        numBuf += e.key;
+        showOsd(numBuf);
+        clearTimeout(numTimer);
+        numTimer = setTimeout(() => {
+          const n = parseInt(numBuf, 10) - 1;
+          numBuf = "";
+          if (n >= 0 && n < currentList.length) playIdx(n);
+          else showOsd(label("notFound"));
+        }, 1500);
+      } else if (["ArrowUp", "PageUp", "ChannelUp"].includes(e.key)) {
+        playIdx(playingIdx + 1);
+      } else if (["ArrowDown", "PageDown", "ChannelDown"].includes(e.key)) {
+        playIdx(playingIdx - 1);
+      } else if (back) {
+        closePlayer();
+      }
+      return;
+    }
+
+    if (document.activeElement === q) {
+      if (e.key === "ArrowDown") { e.preventDefault(); q.blur(); move(1, 0); }
+      else if (e.key === "Escape") { q.value = ""; query = ""; buildRows(); }
+      return;
+    }
+
+    if (back && inSeries) {
+      e.preventDefault();
+      leaveSeries();
+      return;
+    }
+
+    switch (e.key) {
+      case "ArrowRight": e.preventDefault(); move(0, 1); break;
+      case "ArrowLeft":  e.preventDefault(); move(0, -1); break;
+      case "ArrowDown":  e.preventDefault(); move(1, 0); break;
+      case "ArrowUp":    e.preventDefault(); move(-1, 0); break;
+      case "Enter":
+        e.preventDefault();
+        if (cur === q) q.focus();
+        else cur && cur.click();
+        break;
+    }
+  });
+
+  // ============ دەستپێکرن ============
+  applyPrefs();
+  $("rows").innerHTML = `<div class="empty" style="padding:40px 4vw">${label("loading")}</div>`;
+  loadContent();
+</script>
+<script>
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
+</script>
+</body>
+</html>
